@@ -15,7 +15,8 @@ from model import SentenceVAE
 
 
 def main(args):
-    ts = time.strftime('%Y-%b-%d-%H:%M:%S', time.gmtime())
+    args.test = False
+    ts = time.strftime('%Y-%b-%d-%H-%M-%S', time.gmtime())
 
     splits = ['train', 'valid'] + (['test'] if args.test else [])
 
@@ -59,18 +60,19 @@ def main(args):
         writer.add_text("ts", ts)
 
     save_model_path = os.path.join(args.save_model_path, ts)
-    os.makedirs(save_model_path)
+    os.makedirs(save_model_path, exist_ok=True)
 
     with open(os.path.join(save_model_path, 'model_params.json'), 'w') as f:
         json.dump(params, f, indent=4)
 
     def kl_anneal_function(anneal_function, step, k, x0):
         if anneal_function == 'logistic':
-            return float(1/(1+np.exp(-k*(step-x0))))
+            return float(1 / (1 + np.exp(-k * (step - x0))))
         elif anneal_function == 'linear':
-            return min(1, step/x0)
+            return min(1, step / x0)
 
     NLL = torch.nn.NLLLoss(ignore_index=datasets['train'].pad_idx, reduction='sum')
+
     def loss_fn(logp, target, length, mean, logv, anneal_function, step, k, x0):
 
         # cut-off unnecessary padding from target, and flatten
@@ -97,7 +99,7 @@ def main(args):
             data_loader = DataLoader(
                 dataset=datasets[split],
                 batch_size=args.batch_size,
-                shuffle=split=='train',
+                shuffle=split == 'train',
                 num_workers=cpu_count(),
                 pin_memory=torch.cuda.is_available()
             )
@@ -122,8 +124,9 @@ def main(args):
                 logp, mean, logv, z = model(batch['input'], batch['length'])
 
                 # loss calculation
-                NLL_loss, KL_loss, KL_weight = loss_fn(logp, batch['target'],
-                    batch['length'], mean, logv, args.anneal_function, step, args.k, args.x0)
+                NLL_loss, KL_loss, KL_weight = (
+                    loss_fn(logp, batch['target'], batch['length'], mean, logv, args.anneal_function, step, args.k, args.x0)
+                )
 
                 loss = (NLL_loss + KL_weight * KL_loss) / batch_size
 
@@ -138,18 +141,18 @@ def main(args):
                 tracker['ELBO'] = torch.cat((tracker['ELBO'], loss.data.view(1, -1)), dim=0)
 
                 if args.tensorboard_logging:
-                    writer.add_scalar("%s/ELBO" % split.upper(), loss.item(), epoch*len(data_loader) + iteration)
+                    writer.add_scalar("%s/ELBO" % split.upper(), loss.item(), epoch * len(data_loader) + iteration)
                     writer.add_scalar("%s/NLL Loss" % split.upper(), NLL_loss.item() / batch_size,
-                                      epoch*len(data_loader) + iteration)
+                                      epoch * len(data_loader) + iteration)
                     writer.add_scalar("%s/KL Loss" % split.upper(), KL_loss.item() / batch_size,
-                                      epoch*len(data_loader) + iteration)
+                                      epoch * len(data_loader) + iteration)
                     writer.add_scalar("%s/KL Weight" % split.upper(), KL_weight,
-                                      epoch*len(data_loader) + iteration)
+                                      epoch * len(data_loader) + iteration)
 
-                if iteration % args.print_every == 0 or iteration+1 == len(data_loader):
+                if iteration % args.print_every == 0 or iteration + 1 == len(data_loader):
                     print("%s Batch %04d/%i, Loss %9.4f, NLL-Loss %9.4f, KL-Loss %9.4f, KL-Weight %6.3f"
-                          % (split.upper(), iteration, len(data_loader)-1, loss.item(), NLL_loss.item()/batch_size,
-                          KL_loss.item()/batch_size, KL_weight))
+                          % (split.upper(), iteration, len(data_loader) - 1, loss.item(), NLL_loss.item() / batch_size,
+                             KL_loss.item() / batch_size, KL_weight))
 
                 if split == 'valid':
                     if 'target_sents' not in tracker:
@@ -167,9 +170,9 @@ def main(args):
             if split == 'valid':
                 dump = {'target_sents': tracker['target_sents'], 'z': tracker['z'].tolist()}
                 if not os.path.exists(os.path.join('dumps', ts)):
-                    os.makedirs('dumps/'+ts)
-                with open(os.path.join('dumps/'+ts+'/valid_E%i.json' % epoch), 'w') as dump_file:
-                    json.dump(dump,dump_file)
+                    os.makedirs('dumps/' + ts)
+                with open(os.path.join('dumps/' + ts + '/valid_E%i.json' % epoch), 'w') as dump_file:
+                    json.dump(dump, dump_file)
 
             # save checkpoint
             if split == 'train':
@@ -181,7 +184,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--data_dir', type=str, default='data')
+    parser.add_argument('--data_dir', type=str, default='bbc_full')
     parser.add_argument('--create_data', action='store_true')
     parser.add_argument('--max_sequence_length', type=int, default=60)
     parser.add_argument('--min_occ', type=int, default=1)
@@ -194,9 +197,9 @@ if __name__ == '__main__':
     parser.add_argument('-eb', '--embedding_size', type=int, default=300)
     parser.add_argument('-rnn', '--rnn_type', type=str, default='gru')
     parser.add_argument('-hs', '--hidden_size', type=int, default=256)
-    parser.add_argument('-nl', '--num_layers', type=int, default=1)
-    parser.add_argument('-bi', '--bidirectional', action='store_true')
-    parser.add_argument('-ls', '--latent_size', type=int, default=16)
+    parser.add_argument('-nl', '--num_layers', type=int, default=2)
+    parser.add_argument('-bi', '--bidirectional', type=bool, default=False)
+    parser.add_argument('-ls', '--latent_size', type=int, default=32)
     parser.add_argument('-wd', '--word_dropout', type=float, default=0)
     parser.add_argument('-ed', '--embedding_dropout', type=float, default=0.5)
 
@@ -205,7 +208,7 @@ if __name__ == '__main__':
     parser.add_argument('-x0', '--x0', type=int, default=2500)
 
     parser.add_argument('-v', '--print_every', type=int, default=50)
-    parser.add_argument('-tb', '--tensorboard_logging', action='store_true')
+    parser.add_argument('-tb', '--tensorboard_logging', type=bool, default=True)
     parser.add_argument('-log', '--logdir', type=str, default='logs')
     parser.add_argument('-bin', '--save_model_path', type=str, default='bin')
 
